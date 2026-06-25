@@ -1,0 +1,10 @@
+[package]
+name = "sensor-regex"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+regex = "1"
+toml = "0.8"
+bytes = "1"

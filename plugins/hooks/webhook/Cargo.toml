@@ -1,0 +1,13 @@
+[package]
+name = "hook-webhook"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"

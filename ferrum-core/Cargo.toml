@@ -1,0 +1,15 @@
+[package]
+name = "ferrum-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../ferrum-sdk" }
+rustc-hash = "2"
+thiserror = "2"
+toml = { version = "0.8", features = ["parse"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+bytes = "1"

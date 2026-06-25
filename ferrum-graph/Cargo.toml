@@ -1,0 +1,12 @@
+[package]
+name = "ferrum-graph"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ferrum-graph"
+path = "src/main.rs"
+
+[dependencies]
+toml = { version = "0.8", features = ["parse"] }
+serde = { version = "1", features = ["derive"] }

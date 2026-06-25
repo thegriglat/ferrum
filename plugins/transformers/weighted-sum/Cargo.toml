@@ -1,0 +1,9 @@
+[package]
+name = "transformer-weighted-sum"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+rustc-hash = "2"
+toml = { version = "0.8", features = ["parse"] }

@@ -1,0 +1,9 @@
+[package]
+name = "sensor-asn"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+maxminddb = "0.24"
+rustc-hash = "2"

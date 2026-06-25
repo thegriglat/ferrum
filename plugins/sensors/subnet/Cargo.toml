@@ -1,0 +1,9 @@
+[package]
+name = "sensor-subnet"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+ipnet = "2"
+toml = "0.8"

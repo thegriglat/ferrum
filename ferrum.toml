@@ -1,0 +1,356 @@
+# ferrum.toml — demo configuration using all available plugins.
+# Protects a REST API (/api/*) with multi-layer filtering:
+#
+#   audit → known-bad-ip → scanner-subnet → geo → hosting-asn
+#         → scanner-signal → injection → api-format → auth
+#         → rate-asn → rate-global → allow
+
+entry = "audit"
+
+[server]
+listen         = "0.0.0.0:8080"
+upstream       = "127.0.0.1:8081"
+metrics_listen = "0.0.0.0:9090"
+
+# ---------------------------------------------------------------------------
+# Sensors — network identification
+# ---------------------------------------------------------------------------
+
+[sensors.known_bad_ips]
+plugin = "sensor-ip"
+ips    = ["1.2.3.4", "5.6.7.8", "203.0.113.99"]
+
+[sensors.scanner_subnets]
+plugin = "sensor-subnet"
+cidrs  = ["185.220.101.0/24", "185.220.102.0/24", "51.15.0.0/16"]
+
+[sensors.geo_blocked]
+plugin    = "sensor-geo"
+db_path   = "/etc/ferrum/GeoLite2-Country.mmdb"
+countries = ["KP", "IR"]
+
+# Well-known cloud ASNs frequently used for scanning.
+[sensors.hosting_asns]
+plugin  = "sensor-asn"
+db_path = "/etc/ferrum/GeoLite2-ASN.mmdb"
+asns    = [396982, 8075, 16276]   # GCP, Microsoft Azure, OVH
+
+# ---------------------------------------------------------------------------
+# Sensors — request shape
+# ---------------------------------------------------------------------------
+
+[sensors.large_body]
+plugin    = "sensor-body-size"
+min_bytes = 65536    # 64 KiB — bottom of the scale
+max_bytes = 524288   # 512 KiB — maximum score
+
+[sensors.is_mutating_method]
+plugin = "sensor-string-match"
+field  = "method"
+op     = "eq"
+values = ["POST", "PUT", "PATCH", "DELETE"]
+
+[sensors.is_api_path]
+plugin = "sensor-string-match"
+field  = "path"
+op     = "prefix"
+values = ["/api/"]
+
+[sensors.has_json_ct]
+plugin = "sensor-string-match"
+field  = "content-type"
+op     = "contains"
+values = ["application/json"]
+
+[sensors.has_session]
+plugin = "sensor-cookie"
+name   = "session"
+op     = "present"
+
+# ---------------------------------------------------------------------------
+# Sensors — attack signatures
+# ---------------------------------------------------------------------------
+
+[sensors.sqli_uri]
+plugin   = "sensor-regex"
+target   = "uri"
+patterns = [
+    "(?i)union.{0,20}select",
+    "(?i)select.{0,20}from",
+    "(?i)drop.{0,20}table",
+    "(?i)insert.{0,20}into",
+    "(?i)--\\s*$",
+    "(?i)'.{0,10}or.{0,10}'1'='1",
+]
+
+[sensors.sqli_body]
+plugin   = "sensor-regex"
+target   = "body"
+patterns = [
+    "(?i)union.{0,20}select",
+    "(?i)select.{0,20}from",
+    "(?i)drop.{0,20}table",
+    "(?i)insert.{0,20}into",
+    "(?i)--\\s*$",
+    "(?i)'.{0,10}or.{0,10}'1'='1",
+]
+
+[sensors.xss_uri]
+plugin   = "sensor-regex"
+target   = "uri"
+patterns = [
+    "(?i)<script",
+    "(?i)javascript:",
+    "(?i)on(?:load|error|click|mouse\\w+)\\s*=",
+    "(?i)<iframe",
+    "(?i)eval\\s*\\(",
+]
+
+[sensors.xss_body]
+plugin   = "sensor-regex"
+target   = "body"
+patterns = [
+    "(?i)<script",
+    "(?i)javascript:",
+    "(?i)on(?:load|error|click|mouse\\w+)\\s*=",
+    "(?i)<iframe",
+    "(?i)eval\\s*\\(",
+]
+
+[sensors.path_traversal]
+plugin   = "sensor-regex"
+target   = "uri"
+patterns = [
+    "\\.\\./",
+    "\\.\\.\\\\",
+    "(?i)%2e%2e%2f",
+    "(?i)%252e%252e",
+]
+
+[sensors.scanner_ua]
+plugin   = "sensor-regex"
+target   = "header:User-Agent"
+patterns = [
+    "(?i)nikto",
+    "(?i)sqlmap",
+    "(?i)masscan",
+    "(?i)nmap",
+    "(?i)zgrab",
+    "(?i)nuclei",
+]
+
+# ---------------------------------------------------------------------------
+# Sensors — rate limiting
+# ---------------------------------------------------------------------------
+
+# Key = ASN string (if the IP matched hosting_asns), otherwise falls back to client IP.
+[sensors.per_asn_rate]
+plugin             = "sensor-rate-limit"
+source_provider_id = "hosting_asns"
+limit              = 500
+window_secs        = 60
+
+# Global per-IP rate-limit: source_provider_id has no metadata for most IPs
+# → automatic fallback to client IP.
+[sensors.global_rate]
+plugin             = "sensor-rate-limit"
+source_provider_id = "known_bad_ips"
+limit              = 200
+window_secs        = 10
+
+# ---------------------------------------------------------------------------
+# Transformers
+# ---------------------------------------------------------------------------
+
+[transformers.combined_sqli]
+plugin = "or"
+inputs = ["sqli_uri", "sqli_body"]
+
+[transformers.combined_xss]
+plugin = "or"
+inputs = ["xss_uri", "xss_body"]
+
+# Weighted injection risk score; path traversal has the highest weight.
+[transformers.injection_risk]
+plugin = "weighted_sum"
+
+[transformers.injection_risk.inputs]
+combined_sqli  = 0.7
+combined_xss   = 0.5
+path_traversal = 0.8
+
+# not: invert the presence of the session cookie.
+[transformers.missing_session]
+plugin = "not"
+input  = "has_session"
+
+# not: invert the presence of the JSON Content-Type.
+[transformers.no_json_ct]
+plugin = "not"
+input  = "has_json_ct"
+
+# and: mutating request to /api/* without JSON — likely a bad client.
+[transformers.api_mutation_no_json]
+plugin = "and"
+inputs = ["is_mutating_method", "is_api_path", "no_json_ct"]
+
+# and: request to /api/* without a session cookie — unauthenticated.
+[transformers.unauth_api]
+plugin = "and"
+inputs = ["is_api_path", "missing_session"]
+
+# or: scan signal — suspicious UA or abnormally large body.
+[transformers.scanner_signal]
+plugin = "or"
+inputs = ["scanner_ua", "large_body"]
+
+# ---------------------------------------------------------------------------
+# Hooks
+# ---------------------------------------------------------------------------
+
+# Audit every request via syslog — entry point of the chain.
+[hooks.audit]
+plugin   = "hook-syslog"
+facility = "security"
+ident    = "ferrum"
+severity = "info"
+next     = "block-known-bad-ip"
+
+# Webhook notification on block → then return 403.
+[hooks.alert_block]
+plugin     = "hook-webhook"
+url        = "https://hooks.example.com/ferrum/blocked"
+timeout_ms = 2000
+next       = "block_403"
+
+# Webhook notification on tarpit → then hold the connection open.
+[hooks.alert_tarpit]
+plugin     = "hook-webhook"
+url        = "https://hooks.example.com/ferrum/tarpit"
+timeout_ms = 2000
+next       = "tarpit"
+
+# ---------------------------------------------------------------------------
+# Terminators
+# ---------------------------------------------------------------------------
+
+[terminators.block_403]
+plugin = "block"
+status = 403
+
+# Drop the connection without a response — for known-malicious IPs.
+[terminators.drop_conn]
+plugin = "drop"
+
+# 429 with a Retry-After header — for rate-limited requests.
+[terminators.rate_limited_429]
+plugin      = "rate_limited"
+retry_after = 60
+
+# Hold the connection open for 8 s — tarpit for scanners.
+[terminators.tarpit]
+plugin   = "timeout"
+delay_ms = 8000
+
+# Redirect to API docs on wrong Content-Type.
+[terminators.redirect_docs]
+plugin      = "redirect"
+target_url  = "/docs/api"
+status_code = 302
+
+# Redirect to login for unauthenticated requests to /api/*.
+[terminators.redirect_login]
+plugin      = "redirect"
+target_url  = "/login"
+status_code = 302
+
+[terminators.allow]
+plugin = "pass"
+
+# ---------------------------------------------------------------------------
+# Rules — decision chain
+# ---------------------------------------------------------------------------
+
+# 1. Known-malicious IPs → drop connection without a response.
+[[rules]]
+id          = "block-known-bad-ip"
+input       = "known_bad_ips"
+threshold   = 100
+if_action   = "drop_conn"
+else_action = "block-scanner-subnet"
+
+# 2. Tor / known scanner subnets → tarpit + webhook.
+[[rules]]
+id          = "block-scanner-subnet"
+input       = "scanner_subnets"
+threshold   = 100
+if_action   = "alert_tarpit"
+else_action = "block-geo"
+
+# 3. Blocked countries → 403 + webhook.
+[[rules]]
+id          = "block-geo"
+input       = "geo_blocked"
+threshold   = 100
+if_action   = "alert_block"
+else_action = "block-hosting-asn"
+
+# 4. Cloud hosting (GCP / Azure / OVH) → 403 + webhook.
+[[rules]]
+id          = "block-hosting-asn"
+input       = "hosting_asns"
+threshold   = 100
+if_action   = "alert_block"
+else_action = "check-scanner-signal"
+
+# 5. Scanner UA or body >64 KiB → tarpit.
+#    buffer_body is required for large_body.
+[[rules]]
+id          = "check-scanner-signal"
+input       = "scanner_signal"
+threshold   = 50
+if_action   = "tarpit"
+else_action = "check-injection"
+buffer_body = true
+
+# 6. Weighted injection risk (SQLi + XSS + path traversal) → 403 + webhook.
+#    threshold=34 fires on even a single matched pattern out of six.
+[[rules]]
+id          = "check-injection"
+input       = "injection_risk"
+threshold   = 34
+if_action   = "alert_block"
+else_action = "check-api-format"
+buffer_body = true
+
+# 7. POST/PUT/PATCH/DELETE to /api/* without application/json → /docs/api.
+[[rules]]
+id          = "check-api-format"
+input       = "api_mutation_no_json"
+threshold   = 100
+if_action   = "redirect_docs"
+else_action = "check-auth"
+
+# 8. Request to /api/* without a session cookie → /login.
+[[rules]]
+id          = "check-auth"
+input       = "unauth_api"
+threshold   = 100
+if_action   = "redirect_login"
+else_action = "check-rate-asn"
+
+# 9. Rate-limit by ASN (cloud hosting) / IP (everyone else).
+[[rules]]
+id          = "check-rate-asn"
+input       = "per_asn_rate"
+threshold   = 80
+if_action   = "rate_limited_429"
+else_action = "check-rate-global"
+
+# 10. Global per-IP rate-limit.
+[[rules]]
+id          = "check-rate-global"
+input       = "global_rate"
+threshold   = 90
+if_action   = "rate_limited_429"
+else_action = "allow"

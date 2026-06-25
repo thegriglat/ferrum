@@ -1,0 +1,11 @@
+[package]
+name = "hook-syslog"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+syslog = "6"

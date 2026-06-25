@@ -1,0 +1,9 @@
+[package]
+name = "sensor-ip"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+rustc-hash = "2"
+toml = "0.8"

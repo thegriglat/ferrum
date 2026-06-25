@@ -1,0 +1,11 @@
+[package]
+name = "sensor-body-size"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ferrum-sdk = { path = "../../../ferrum-sdk" }
+
+[dev-dependencies]
+bytes = "1"
+toml = "0.8"
